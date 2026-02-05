@@ -1,8 +1,10 @@
 [
     {
         "netuid": 64,
-        "limit_price": 0.0874,
-        "activation_price": 0.0884,
-        "amount_tao_to_stake": 0.005
+        "limit_price_buy": 0.089,
+        "activation_price_buy": 0.088,
+        "amount_tao_to_stake_buy": 0.005,
+        "pct_profit": 1.1,
+        "slippage_sell_pct": 0.05
     }
 ]

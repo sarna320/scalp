@@ -134,12 +134,13 @@ class PositionDatabase:
             last_updated=datetime.fromisoformat(row["last_updated"]),
         )
 
-    async def get_all_positions(self) -> list[Position]:
+    async def get_all_positions(self) -> dict[int, Position]:
         """Get all positions."""
         cursor = await self._connection.execute("SELECT * FROM positions")
         rows = await cursor.fetchall()
-        return [
-            Position(
+        positions = {}
+        for row in rows:
+            positions[row["netuid"]] = Position(
                 netuid=row["netuid"],
                 total_alpha_rao=row["total_alpha_rao"],
                 total_tao_spent_rao=row["total_tao_spent_rao"],
@@ -147,8 +148,7 @@ class PositionDatabase:
                 num_transactions=row["num_transactions"],
                 last_updated=datetime.fromisoformat(row["last_updated"]),
             )
-            for row in rows
-        ]
+        return positions
 
     async def get_transactions(self, netuid: int | None = None) -> list[Transaction]:
         """Get transactions, optionally filtered by netuid."""

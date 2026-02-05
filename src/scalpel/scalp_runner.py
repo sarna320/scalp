@@ -9,7 +9,7 @@ from scalpel.subnet_config import get_subnet_configs, SubnetConfig
 from scalpel.models import StakeAddedEvent
 
 
-class ScalpBuyer:
+class ScalpRunner:
     def __init__(
         self,
         subtensor: bt.AsyncSubtensor,
@@ -32,7 +32,7 @@ class ScalpBuyer:
             current_block = await self.subtensor.substrate.get_block()
             current_block_hash = current_block.get("header", {}).get("hash")
             self.subnets_config = get_subnet_configs()
-            await self.create_calls()
+            await self.create_calls_buy()  # this calls will always remain the same
             await self.subtensor.substrate.get_block_handler(
                 current_block_hash,
                 header_only=True,
@@ -46,22 +46,96 @@ class ScalpBuyer:
         bt.logging.info(f"Current block: [blue]{self.current_block}[/blue]")
         await self.refresh_prices()
         subnets_to_stake = self.get_subnets_to_stake()
-        responses = await self.process_subnets_to_stake(subnets_to_stake)
-        for response in responses:
-            await self.process_response(response)
+        subnets_to_unstake = await self.get_subnets_to_unstake()
+        responses_for_stake, responses_for_unstake = await asyncio.gather(
+            *[
+                self.process_subnets(subnets_to_stake, call_is_buy=True),
+                self.process_subnets(subnets_to_unstake, call_is_buy=False),
+            ]
+        )
+        response_tasks = [
+            self.process_response_stake(response) for response in responses_for_stake
+        ]
+        await asyncio.gather(*response_tasks)
+
         return True
 
-    async def process_subnets_to_stake(
-        self, subnets_to_stake: list[SubnetConfig]
+    async def get_subnets_to_unstake(self) -> list[SubnetConfig]:
+        subnets_to_unstake = []
+        bt.logging.debug(f"Processing subnets to unstake")
+        all_position = await self.db.get_all_positions()
+        for subnet_config in self.subnets_config:
+            current_price_on_subnet = self.prices.get(subnet_config.netuid)
+            current_postion = all_position.get(subnet_config.netuid)
+            bt.logging.debug(f"Current postion: {current_postion}")
+            if current_postion is None:
+                continue
+            actiavtion_price = (
+                current_postion.avg_entry_price * subnet_config.pct_profit
+            )
+            if current_price_on_subnet.tao >= actiavtion_price:
+                subnet_config.call_sell = await SubtensorModule(
+                    self.subtensor
+                ).remove_stake_limit(
+                    netuid=subnet_config.netuid,
+                    hotkey=subnet_config.validator_hotkey,
+                    amount_unstaked=current_postion.total_alpha_rao,
+                    limit_price=actiavtion_price
+                    * (1 - subnet_config.slippage_sell_pct),
+                    allow_partial=True,
+                )
+
+                subnets_to_unstake.append(subnet_config)
+        bt.logging.debug(
+            f"Achieved actiavation price for subnets to unstake: [blue]{subnets_to_unstake}[/blue]"
+        )
+        return subnets_to_unstake
+
+    async def process_subnets(
+        self, subnets_to_stake: list[SubnetConfig], call_is_buy: bool
     ) -> list[AsyncExtrinsicReceipt | None]:
         if len(subnets_to_stake) == 0:
             return [None]
         responses = await asyncio.gather(
-            *[self.sign_and_send_extrinsic(subnet.call) for subnet in subnets_to_stake]
+            *[
+                self.sign_and_send_extrinsic(
+                    subnet.call_buy if call_is_buy else subnet.call_sell
+                )
+                for subnet in subnets_to_stake
+            ]
         )
         return responses
 
-    async def process_response(self, response: None | AsyncExtrinsicReceipt):
+    async def process_response_stake(self, response: None | AsyncExtrinsicReceipt):
+        if response is None:
+            return
+        bt.logging.debug(f"Processing response: {response}")
+        events = await self.subtensor.substrate.get_events(response.block_hash)
+        bt.logging.debug("EVENTS:")
+        for event in events:
+            stake_event = StakeAddedEvent.from_substrate_event(event)
+            if stake_event is None:
+                continue
+            if stake_event.coldkey_ss58 != self.wallet.coldkey.ss58_address:
+                continue
+            bt.logging.debug(stake_event)
+            position = await self.db.update_position(
+                event=stake_event,
+                extrinsic_hash=response.extrinsic_hash,
+                block_hash=response.block_hash,
+                block_number=response.block_number,
+            )
+            bt.logging.info(
+                f"Position updated for netuid {position.netuid}: "
+                f"alpha={position.total_alpha}, "
+                f"tao_spent={position.total_tao_spent}, "
+                f"fee_paid={position.total_fee_paid}, "
+                f"avg_price={position.avg_entry_price:.6f}, "
+                f"txs={position.num_transactions}"
+            )
+            break
+
+    async def process_response_stake(self, response: None | AsyncExtrinsicReceipt):
         if response is None:
             return
         bt.logging.debug(f"Processing response: {response}")
@@ -114,13 +188,15 @@ class ScalpBuyer:
                 await self.sign_and_send_extrinsic(call)
             return None
 
-    async def create_calls(self):
+    async def create_calls_buy(self):
         for subnet_config in self.subnets_config:
-            subnet_config.call = await SubtensorModule(self.subtensor).add_stake_limit(
+            subnet_config.call_buy = await SubtensorModule(
+                self.subtensor
+            ).add_stake_limit(
                 hotkey=subnet_config.validator_hotkey,
                 netuid=subnet_config.netuid,
-                amount_staked=subnet_config.amount_tao_to_stake.rao,
-                limit_price=subnet_config.limit_price.rao,
+                amount_staked=subnet_config.amount_tao_to_stake_buy.rao,
+                limit_price=subnet_config.limit_price_buy.rao,
                 allow_partial=True,
             )
             bt.logging.info(f"Subnets config with calls: {subnet_config}")
@@ -129,10 +205,10 @@ class ScalpBuyer:
         subnets_to_stake = []
         for subnet_config in self.subnets_config:
             current_price_on_subnet = self.prices.get(subnet_config.netuid)
-            if current_price_on_subnet.tao <= subnet_config.activation_price.tao:
+            if current_price_on_subnet.tao <= subnet_config.activation_price_buy.tao:
                 subnets_to_stake.append(subnet_config)
         bt.logging.debug(
-            f"Achieved actiavation price for subnets: [blue]{subnets_to_stake}[/blue]"
+            f"Achieved actiavation price for subnets to stake: [blue]{subnets_to_stake}[/blue]"
         )
         return subnets_to_stake
 

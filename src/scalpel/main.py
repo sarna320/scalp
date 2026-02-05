@@ -2,7 +2,7 @@ import asyncio
 import bittensor as bt
 
 from scalpel.logger import configure_logging
-from scalpel.scalp_buyer import ScalpBuyer
+from scalpel.scalp_runner import ScalpRunner
 
 
 async def main():
@@ -23,7 +23,7 @@ async def main():
         ),
         websocket_shutdown_timer=20,
     ) as subtensor:
-        scalp_buyer = ScalpBuyer(
+        scalp_buyer = ScalpRunner(
             subtensor=subtensor,
             wallet_name="auto_staker" if not TEST_MODE else "trader_test",
         )
