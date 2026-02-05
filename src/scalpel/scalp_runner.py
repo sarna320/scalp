@@ -6,7 +6,7 @@ import asyncio
 
 from scalpel.database import PositionDatabase
 from scalpel.subnet_config import get_subnet_configs, SubnetConfig
-from scalpel.models import StakeAddedEvent
+from scalpel.models import StakeAddedEvent, StakeRemovedEvent
 
 
 class ScalpRunner:
@@ -55,6 +55,9 @@ class ScalpRunner:
         )
         response_tasks = [
             self.process_response_stake(response) for response in responses_for_stake
+        ] + [
+            self.process_response_unstake(response)
+            for response in responses_for_unstake
         ]
         await asyncio.gather(*response_tasks)
 
@@ -109,11 +112,13 @@ class ScalpRunner:
     async def process_response_stake(self, response: None | AsyncExtrinsicReceipt):
         if response is None:
             return
-        bt.logging.debug(f"Processing response: {response}")
+        bt.logging.debug(f"Processing response for stake: {response}")
         events = await self.subtensor.substrate.get_events(response.block_hash)
         bt.logging.debug("EVENTS:")
         for event in events:
+            bt.logging.debug(event)
             stake_event = StakeAddedEvent.from_substrate_event(event)
+            bt.logging.debug(stake_event)
             if stake_event is None:
                 continue
             if stake_event.coldkey_ss58 != self.wallet.coldkey.ss58_address:
@@ -126,40 +131,43 @@ class ScalpRunner:
                 block_number=response.block_number,
             )
             bt.logging.info(
-                f"Position updated for netuid {position.netuid}: "
+                f"Position STAKE for netuid {position.netuid}: "
                 f"alpha={position.total_alpha}, "
                 f"tao_spent={position.total_tao_spent}, "
-                f"fee_paid={position.total_fee_paid}, "
                 f"avg_price={position.avg_entry_price:.6f}, "
+                f"realized_profit={position.realized_profit}, "
+                f"fee_paid={position.total_fee_paid}, "
                 f"txs={position.num_transactions}"
             )
             break
 
-    async def process_response_stake(self, response: None | AsyncExtrinsicReceipt):
+    async def process_response_unstake(self, response: None | AsyncExtrinsicReceipt):
         if response is None:
             return
-        bt.logging.debug(f"Processing response: {response}")
+        bt.logging.debug(f"Processing response unstake: {response}")
         events = await self.subtensor.substrate.get_events(response.block_hash)
         bt.logging.debug("EVENTS:")
         for event in events:
-            stake_event = StakeAddedEvent.from_substrate_event(event)
-            if stake_event is None:
+            bt.logging.debug(event)
+            unstake_event = StakeRemovedEvent.from_substrate_event(event)
+            bt.logging.debug(unstake_event)
+            if unstake_event is None:
                 continue
-            if stake_event.coldkey_ss58 != self.wallet.coldkey.ss58_address:
+            if unstake_event.coldkey_ss58 != self.wallet.coldkey.ss58_address:
                 continue
-            bt.logging.debug(stake_event)
-            position = await self.db.update_position(
-                event=stake_event,
+            bt.logging.debug(unstake_event)
+            position = await self.db.update_position_unstake(
+                event=unstake_event,
                 extrinsic_hash=response.extrinsic_hash,
                 block_hash=response.block_hash,
                 block_number=response.block_number,
             )
             bt.logging.info(
-                f"Position updated for netuid {position.netuid}: "
+                f"Position UNSTAKE for netuid {position.netuid}: "
                 f"alpha={position.total_alpha}, "
-                f"tao_spent={position.total_tao_spent}, "
-                f"fee_paid={position.total_fee_paid}, "
                 f"avg_price={position.avg_entry_price:.6f}, "
+                f"realized_profit={position.realized_profit}, "
+                f"fee_paid={position.total_fee_paid}, "
                 f"txs={position.num_transactions}"
             )
             break
@@ -181,11 +189,7 @@ class ScalpRunner:
             bt.logging.info(f"Response: {response}")
             return response
         except Exception as e:
-            bt.logging.error(f"Error during sednig extrinsic: {e}")
-            if "ancient birth block" in e:
-                bt.logging.info(f"Retrying with diffrent block")
-                self.current_block += 1
-                await self.sign_and_send_extrinsic(call)
+            bt.logging.error(f"Error during sending extrinsic: {e}")
             return None
 
     async def create_calls_buy(self):

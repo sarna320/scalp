@@ -3,7 +3,7 @@ from pathlib import Path
 import aiosqlite
 import bittensor as bt
 
-from scalpel.models import StakeAddedEvent, Position, Transaction
+from scalpel.models import StakeAddedEvent, StakeRemovedEvent, Position, Transaction
 
 
 class PositionDatabase:
@@ -31,6 +31,7 @@ class PositionDatabase:
                 total_alpha_rao INTEGER NOT NULL DEFAULT 0,
                 total_tao_spent_rao INTEGER NOT NULL DEFAULT 0,
                 total_fee_paid_rao INTEGER NOT NULL DEFAULT 0,
+                realized_profit_rao INTEGER NOT NULL DEFAULT 0,
                 num_transactions INTEGER NOT NULL DEFAULT 0,
                 last_updated TEXT NOT NULL
             )
@@ -43,10 +44,12 @@ class PositionDatabase:
                 netuid INTEGER NOT NULL,
                 coldkey_ss58 TEXT NOT NULL,
                 validator_ss58 TEXT NOT NULL,
+                transaction_type TEXT NOT NULL,
                 tao_spent_rao INTEGER NOT NULL,
                 alpha_received_rao INTEGER NOT NULL,
                 fee_paid_rao INTEGER NOT NULL,
                 price REAL NOT NULL,
+                profit_rao INTEGER,
                 extrinsic_hash TEXT NOT NULL,
                 block_hash TEXT NOT NULL,
                 block_number INTEGER,
@@ -75,8 +78,8 @@ class PositionDatabase:
         # Insert transaction record
         await self._connection.execute(
             """
-            INSERT INTO transactions (netuid, coldkey_ss58, validator_ss58, tao_spent_rao, alpha_received_rao, fee_paid_rao, price, extrinsic_hash, block_hash, block_number, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO transactions (netuid, coldkey_ss58, validator_ss58, transaction_type, tao_spent_rao, alpha_received_rao, fee_paid_rao, price, profit_rao, extrinsic_hash, block_hash, block_number, created_at)
+            VALUES (?, ?, ?, 'BUY', ?, ?, ?, ?, NULL, ?, ?, ?, ?)
             """,
             (
                 event.netuid,
@@ -117,6 +120,88 @@ class PositionDatabase:
 
         return await self.get_position(event.netuid)
 
+    async def update_position_unstake(
+        self,
+        event: StakeRemovedEvent,
+        extrinsic_hash: str,
+        block_hash: str,
+        block_number: int,
+    ) -> Position:
+        """Update position after a successful unstake and record the transaction with profit."""
+        now = datetime.utcnow().isoformat()
+
+        # Get current position to calculate profit
+        current_position = await self.get_position(event.netuid)
+        if current_position is None:
+            bt.logging.warning(
+                f"No position found for netuid {event.netuid} during unstake"
+            )
+            # Create empty position if doesn't exist
+            current_position = Position(
+                netuid=event.netuid,
+                total_alpha_rao=0,
+                total_tao_spent_rao=0,
+                total_fee_paid_rao=0,
+                num_transactions=0,
+                last_updated=datetime.utcnow(),
+            )
+
+        # Calculate price and profit
+        price = (
+            event.tao_recived_rao / event.alpha_unstaked_rao
+            if event.alpha_unstaked_rao > 0
+            else 0
+        )
+
+        # Profit = TAO_received - (alpha_sold * avg_entry_price) - fee
+        cost_basis = event.alpha_unstaked_rao * current_position.avg_entry_price
+        profit_rao = event.tao_recived_rao - int(cost_basis) - event.paid_fee_rao
+
+        # Insert transaction record with SELL type
+        await self._connection.execute(
+            """
+            INSERT INTO transactions (netuid, coldkey_ss58, validator_ss58, transaction_type, tao_spent_rao, alpha_received_rao, fee_paid_rao, price, profit_rao, extrinsic_hash, block_hash, block_number, created_at)
+            VALUES (?, ?, ?, 'SELL', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                event.netuid,
+                event.coldkey_ss58,
+                event.validator_ss58,
+                -event.tao_recived_rao,  # negative because we're receiving TAO
+                -event.alpha_unstaked_rao,  # negative because we're selling alpha
+                event.paid_fee_rao,
+                price,
+                profit_rao,
+                extrinsic_hash,
+                block_hash,
+                block_number,
+                now,
+            ),
+        )
+
+        # Update position - subtract alpha, add realized profit
+        await self._connection.execute(
+            """
+            UPDATE positions SET
+                total_alpha_rao = total_alpha_rao - ?,
+                realized_profit_rao = realized_profit_rao + ?,
+                total_fee_paid_rao = total_fee_paid_rao + ?,
+                num_transactions = num_transactions + 1,
+                last_updated = ?
+            WHERE netuid = ?
+            """,
+            (
+                event.alpha_unstaked_rao,
+                profit_rao,
+                event.paid_fee_rao,
+                now,
+                event.netuid,
+            ),
+        )
+        await self._connection.commit()
+
+        return await self.get_position(event.netuid)
+
     async def get_position(self, netuid: int) -> Position | None:
         """Get position for a specific subnet."""
         cursor = await self._connection.execute(
@@ -130,6 +215,7 @@ class PositionDatabase:
             total_alpha_rao=row["total_alpha_rao"],
             total_tao_spent_rao=row["total_tao_spent_rao"],
             total_fee_paid_rao=row["total_fee_paid_rao"],
+            realized_profit_rao=row["realized_profit_rao"] or 0,
             num_transactions=row["num_transactions"],
             last_updated=datetime.fromisoformat(row["last_updated"]),
         )
@@ -145,6 +231,7 @@ class PositionDatabase:
                 total_alpha_rao=row["total_alpha_rao"],
                 total_tao_spent_rao=row["total_tao_spent_rao"],
                 total_fee_paid_rao=row["total_fee_paid_rao"],
+                realized_profit_rao=row["realized_profit_rao"] or 0,
                 num_transactions=row["num_transactions"],
                 last_updated=datetime.fromisoformat(row["last_updated"]),
             )
