@@ -61,18 +61,20 @@ class ScalpRunner:
         ]
         await asyncio.gather(*response_tasks)
 
-        return True
+        return None
 
     async def get_subnets_to_unstake(self) -> list[SubnetConfig]:
         subnets_to_unstake = []
-        bt.logging.debug(f"Processing subnets to unstake")
         all_position = await self.db.get_all_positions()
+        if not all_position:
+            return subnets_to_unstake
+        bt.logging.debug(f"Processing subnets to unstake")
         for subnet_config in self.subnets_config:
             current_price_on_subnet = self.prices.get(subnet_config.netuid)
             current_postion = all_position.get(subnet_config.netuid)
-            bt.logging.debug(f"Current postion: {current_postion}")
             if current_postion is None:
                 continue
+            bt.logging.debug(f"Current postion: {current_postion}")
             actiavtion_price = (
                 current_postion.avg_entry_price * subnet_config.pct_profit
             )
@@ -89,9 +91,10 @@ class ScalpRunner:
                 )
 
                 subnets_to_unstake.append(subnet_config)
-        bt.logging.debug(
-            f"Achieved actiavation price for subnets to unstake: [blue]{subnets_to_unstake}[/blue]"
-        )
+        if subnets_to_unstake:
+            bt.logging.debug(
+                f"Achieved actiavation price for subnets to unstake: [blue]{subnets_to_unstake}[/blue]"
+            )
         return subnets_to_unstake
 
     async def process_subnets(
@@ -116,7 +119,7 @@ class ScalpRunner:
         events = await self.subtensor.substrate.get_events(response.block_hash)
         bt.logging.debug("EVENTS:")
         for event in events:
-            bt.logging.debug(event)
+            # bt.logging.debug(event)
             stake_event = StakeAddedEvent.from_substrate_event(event)
             bt.logging.debug(stake_event)
             if stake_event is None:
@@ -148,7 +151,7 @@ class ScalpRunner:
         events = await self.subtensor.substrate.get_events(response.block_hash)
         bt.logging.debug("EVENTS:")
         for event in events:
-            bt.logging.debug(event)
+            # bt.logging.debug(event)
             unstake_event = StakeRemovedEvent.from_substrate_event(event)
             bt.logging.debug(unstake_event)
             if unstake_event is None:
@@ -186,7 +189,10 @@ class ScalpRunner:
                 wait_for_inclusion=True,
                 wait_for_finalization=False,
             )
-            bt.logging.info(f"Response: {response}")
+            ok = await response.is_success
+            bt.logging.info(
+                f"Response: {response} | succes: {ok} | error: {await response.error_message if not ok else None}"
+            )
             return response
         except Exception as e:
             bt.logging.error(f"Error during sending extrinsic: {e}")
@@ -211,14 +217,15 @@ class ScalpRunner:
             current_price_on_subnet = self.prices.get(subnet_config.netuid)
             if current_price_on_subnet.tao <= subnet_config.activation_price_buy.tao:
                 subnets_to_stake.append(subnet_config)
-        bt.logging.debug(
-            f"Achieved actiavation price for subnets to stake: [blue]{subnets_to_stake}[/blue]"
-        )
+        if subnets_to_stake:
+            bt.logging.debug(
+                f"Achieved actiavation price for subnets to stake: [blue]{subnets_to_stake}[/blue]"
+            )
         return subnets_to_stake
 
     async def refresh_prices(self):
         try:
             self.prices = await self.subtensor.get_subnet_prices()
-            bt.logging.debug(f"Refreshed prices: {self.prices}")
+            # bt.logging.debug(f"Refreshed prices: {self.prices}")
         except Exception as e:
             bt.logging.error(f"Error refreshing prices: {e}")
