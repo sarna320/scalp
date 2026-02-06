@@ -57,13 +57,13 @@ class ScalpRunner:
                 self.process_subnets(subnets_to_unstake, call_is_buy=False),
             ]
         )
-        response_tasks = [
-            self.process_response_stake(response) for response in responses_for_stake
-        ] + [
-            self.process_response_unstake(response)
-            for response in responses_for_unstake
-        ]
-        await asyncio.gather(*response_tasks)
+        await asyncio.gather(
+            *[self.process_response_stake(response) for response in responses_for_stake]
+            + [
+                self.process_response_unstake(response)
+                for response in responses_for_unstake
+            ]
+        )
 
         return None
 
@@ -116,16 +116,16 @@ class ScalpRunner:
         return subnets_to_unstake
 
     async def process_subnets(
-        self, subnets_to_stake: list[SubnetConfig], call_is_buy: bool
+        self, subnets: list[SubnetConfig], call_is_buy: bool
     ) -> list[AsyncExtrinsicReceipt | None]:
-        if len(subnets_to_stake) == 0:
+        if len(subnets) == 0:
             return [None]
         responses = await asyncio.gather(
             *[
                 self.sign_and_send_extrinsic(
                     subnet.call_buy if call_is_buy else subnet.call_sell
                 )
-                for subnet in subnets_to_stake
+                for subnet in subnets
             ]
         )
         return responses
