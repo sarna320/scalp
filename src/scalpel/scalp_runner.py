@@ -9,6 +9,10 @@ from scalpel.subnet_config import get_subnet_configs, SubnetConfig
 from scalpel.models import StakeAddedEvent, StakeRemovedEvent
 
 
+EXTRINSIC_FEE_TAO = 0.000136963
+ALPHA_FEE_PCT = 0.0005  # 0.05%
+
+
 class ScalpRunner:
     def __init__(
         self,
@@ -68,33 +72,47 @@ class ScalpRunner:
         all_position = await self.db.get_all_positions()
         if not all_position:
             return subnets_to_unstake
-        bt.logging.debug(f"Processing subnets to unstake")
         for subnet_config in self.subnets_config:
             current_price_on_subnet = self.prices.get(subnet_config.netuid)
             current_postion = all_position.get(subnet_config.netuid)
-            if current_postion is None:
+            if current_postion is None or current_postion.total_alpha == 0:
                 continue
             bt.logging.debug(f"Current postion: {current_postion}")
-            actiavtion_price = (
+
+            base_required_price = (
                 current_postion.avg_entry_price * subnet_config.pct_profit
             )
-            if current_price_on_subnet.tao >= actiavtion_price:
+
+            extrinsic_fee_per_alpha = (
+                EXTRINSIC_FEE_TAO / current_postion.total_alpha_rao
+            )
+
+            required_price_with_fees = (
+                base_required_price + extrinsic_fee_per_alpha
+            ) / (1 - ALPHA_FEE_PCT)
+
+            if current_price_on_subnet.tao >= required_price_with_fees:
                 subnet_config.call_sell = await SubtensorModule(
                     self.subtensor
                 ).remove_stake_limit(
                     netuid=subnet_config.netuid,
                     hotkey=subnet_config.validator_hotkey,
                     amount_unstaked=current_postion.total_alpha_rao,
-                    limit_price=actiavtion_price
+                    limit_price=required_price_with_fees
                     * (1 - subnet_config.slippage_sell_pct),
                     allow_partial=True,
                 )
 
                 subnets_to_unstake.append(subnet_config)
+                bt.logging.info(
+                    f"Unstake triggered for netuid {subnet_config.netuid}: "
+                    f"current_price={current_price_on_subnet.tao:.6f}, "
+                    f"base_required={base_required_price:.6f}, "
+                    f"required_with_fees={required_price_with_fees:.6f}"
+                )
+
         if subnets_to_unstake:
-            bt.logging.debug(
-                f"Achieved actiavation price for subnets to unstake: [blue]{subnets_to_unstake}[/blue]"
-            )
+            bt.logging.debug(f"Subnets to unstake: [blue]{subnets_to_unstake}[/blue]")
         return subnets_to_unstake
 
     async def process_subnets(
