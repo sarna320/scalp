@@ -63,7 +63,7 @@ class SubnetConfig:
         self.slippage_sell_pct = float(self.slippage_sell_pct)
 
         # Validate configuration to prevent losses
-        # self._validate_config()
+        self._validate_config()
 
     def _validate_config(self) -> None:
         """

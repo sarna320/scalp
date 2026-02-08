@@ -3,13 +3,14 @@ from bittensor.core.extrinsics.pallets.base import Call
 from async_substrate_interface.async_substrate import AsyncExtrinsicReceipt
 import bittensor as bt
 import asyncio
+import math
 
 from scalpel.database import PositionDatabase
 from scalpel.subnet_config import get_subnet_configs, SubnetConfig
 from scalpel.models import StakeAddedEvent, StakeRemovedEvent
 
-
-EXTRINSIC_FEE_TAO = 0.000136963
+EXTRINSIC_FEE_TAO_ADD_STAKE = 0.000136963
+EXTRINSIC_FEE_TAO_REMOVE_STAKE = 0.000135688
 ALPHA_FEE_PCT = 0.0005  # 0.05%
 
 
@@ -50,22 +51,41 @@ class ScalpRunner:
         bt.logging.info(f"Current block: [blue]{self.current_block}[/blue]")
         await self.refresh_prices()
         subnets_to_stake = self.get_subnets_to_stake()
-        subnets_to_unstake = await self.get_subnets_to_unstake()
-        responses_for_stake, responses_for_unstake = await asyncio.gather(
-            *[
-                self.process_subnets(subnets_to_stake, call_is_buy=True),
-                self.process_subnets(subnets_to_unstake, call_is_buy=False),
-            ]
+        # subnets_to_unstake = await self.get_subnets_to_unstake()
+        # responses_for_stake, responses_for_unstake = await asyncio.gather(
+        #     *[
+        #         self.process_subnets(subnets_to_stake, call_is_buy=True),
+        #         self.process_subnets(subnets_to_unstake, call_is_buy=False),
+        #     ]
+        # )
+        # await asyncio.gather(
+        #     *[self.process_response_stake(response) for response in responses_for_stake]
+        #     + [
+        #         self.process_response_unstake(response)
+        #         for response in responses_for_unstake
+        #     ]
+        # )
+
+        responses_for_stake = await self.process_subnets(
+            subnets_to_stake, call_is_buy=True
         )
+
         await asyncio.gather(
             *[self.process_response_stake(response) for response in responses_for_stake]
-            + [
-                self.process_response_unstake(response)
-                for response in responses_for_unstake
-            ]
         )
 
         return None
+
+    def _safe_unstake_amount_rao(
+        sefl, stake_rao: int, fee_pct: float = ALPHA_FEE_PCT, buffer_rao: int = 0
+    ) -> int:
+        """
+        Returns an amount slightly below the current stake to avoid NotEnoughStakeToWithdraw caused by fees/rounding.
+        buffer_rao is in alpha-RAO.
+        """
+        # Conservative: assume fee is taken "on top" in stake-equivalent terms.
+        fee_rao = math.ceil(stake_rao * fee_pct)
+        return max(0, stake_rao - fee_rao - buffer_rao)
 
     async def get_subnets_to_unstake(self) -> list[SubnetConfig]:
         subnets_to_unstake = []
@@ -77,14 +97,13 @@ class ScalpRunner:
             current_postion = all_position.get(subnet_config.netuid)
             if current_postion is None or current_postion.total_alpha == 0:
                 continue
-            bt.logging.debug(f"Current postion: {current_postion}")
 
             base_required_price = (
                 current_postion.avg_entry_price * subnet_config.pct_profit
             )
 
             extrinsic_fee_per_alpha = (
-                EXTRINSIC_FEE_TAO / current_postion.total_alpha_rao
+                EXTRINSIC_FEE_TAO_REMOVE_STAKE / current_postion.total_alpha_rao / 1e9
             )
 
             required_price_with_fees = (
@@ -92,14 +111,33 @@ class ScalpRunner:
             ) / (1 - ALPHA_FEE_PCT)
 
             if current_price_on_subnet.tao >= required_price_with_fees:
+                bt.logging.debug(f"Current postion: {current_postion}")
+                limit_price = bt.Balance.from_tao(
+                    required_price_with_fees * (1 - subnet_config.slippage_sell_pct)
+                )
+                total_alpha_rao_to_unstake_from_position = bt.Balance.from_rao(
+                    current_postion.total_alpha_rao, subnet_config.netuid
+                )  # this for some reason gives error even if this exactly the same value from chain
+                total_alpha_rao_to_unstake_from_chain = await self.subtensor.get_stake(
+                    self.wallet.coldkey.ss58_address,
+                    subnet_config.validator_hotkey,
+                    subnet_config.netuid,
+                )
+                bt.logging.debug(
+                    f"Stake from chain: {total_alpha_rao_to_unstake_from_chain.rao} stake from postion {total_alpha_rao_to_unstake_from_position.rao}"
+                )
+
+                amount_unstaked_rao = self._safe_unstake_amount_rao(
+                    total_alpha_rao_to_unstake_from_chain.rao
+                )
+
                 subnet_config.call_sell = await SubtensorModule(
                     self.subtensor
                 ).remove_stake_limit(
                     netuid=subnet_config.netuid,
                     hotkey=subnet_config.validator_hotkey,
-                    amount_unstaked=current_postion.total_alpha_rao,
-                    limit_price=required_price_with_fees
-                    * (1 - subnet_config.slippage_sell_pct),
+                    amount_unstaked=amount_unstaked_rao,
+                    limit_price=limit_price.rao,
                     allow_partial=True,
                 )
 
@@ -109,6 +147,10 @@ class ScalpRunner:
                     f"current_price={current_price_on_subnet.tao:.6f}, "
                     f"base_required={base_required_price:.6f}, "
                     f"required_with_fees={required_price_with_fees:.6f}"
+                )
+            else:
+                bt.logging.debug(
+                    f"Current price: {current_price_on_subnet.tao} < required price with fees: {required_price_with_fees} for current postion: {current_postion}"
                 )
 
         if subnets_to_unstake:
@@ -139,7 +181,6 @@ class ScalpRunner:
         for event in events:
             # bt.logging.debug(event)
             stake_event = StakeAddedEvent.from_substrate_event(event)
-            bt.logging.debug(stake_event)
             if stake_event is None:
                 continue
             if stake_event.coldkey_ss58 != self.wallet.coldkey.ss58_address:
@@ -160,7 +201,6 @@ class ScalpRunner:
                 f"fee_paid={position.total_fee_paid}, "
                 f"txs={position.num_transactions}"
             )
-            break
 
     async def process_response_unstake(self, response: None | AsyncExtrinsicReceipt):
         if response is None:
@@ -171,7 +211,6 @@ class ScalpRunner:
         for event in events:
             # bt.logging.debug(event)
             unstake_event = StakeRemovedEvent.from_substrate_event(event)
-            bt.logging.debug(unstake_event)
             if unstake_event is None:
                 continue
             if unstake_event.coldkey_ss58 != self.wallet.coldkey.ss58_address:
@@ -191,7 +230,6 @@ class ScalpRunner:
                 f"fee_paid={position.total_fee_paid}, "
                 f"txs={position.num_transactions}"
             )
-            break
 
     async def sign_and_send_extrinsic(self, call: Call) -> AsyncExtrinsicReceipt | None:
         try:

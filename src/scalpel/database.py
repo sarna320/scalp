@@ -99,8 +99,8 @@ class PositionDatabase:
         # Upsert position
         await self._connection.execute(
             """
-            INSERT INTO positions (netuid, total_alpha_rao, total_tao_spent_rao, total_fee_paid_rao, num_transactions, last_updated)
-            VALUES (?, ?, ?, ?, 1, ?)
+            INSERT INTO positions (netuid, total_alpha_rao, total_tao_spent_rao, total_fee_paid_rao, realized_profit_rao, num_transactions, last_updated)
+            VALUES (?, ?, ?, ?, 0, 1, ?)
             ON CONFLICT(netuid) DO UPDATE SET
                 total_alpha_rao = total_alpha_rao + excluded.total_alpha_rao,
                 total_tao_spent_rao = total_tao_spent_rao + excluded.total_tao_spent_rao,
@@ -142,20 +142,39 @@ class PositionDatabase:
                 total_alpha_rao=0,
                 total_tao_spent_rao=0,
                 total_fee_paid_rao=0,
+                realized_profit_rao=0,
                 num_transactions=0,
                 last_updated=datetime.utcnow(),
             )
 
-        # Calculate price and profit
+        # Calculate sell price
         price = (
             event.tao_recived_rao / event.alpha_unstaked_rao
             if event.alpha_unstaked_rao > 0
             else 0
         )
 
-        # Profit = TAO_received - (alpha_sold * avg_entry_price) - fee
-        cost_basis = event.alpha_unstaked_rao * current_position.avg_entry_price
-        profit_rao = event.tao_recived_rao - int(cost_basis) - event.paid_fee_rao
+        # Calculate profit for the unstaked amount
+        # Profit = TAO_received - cost_basis - fee
+        cost_basis_unstaked = int(event.alpha_unstaked_rao * current_position.avg_entry_price)
+        profit_rao = event.tao_recived_rao - cost_basis_unstaked - event.paid_fee_rao
+
+        # Calculate remaining position after unstake
+        new_alpha_rao = current_position.total_alpha_rao - event.alpha_unstaked_rao
+        new_cost_basis_rao = current_position.total_tao_spent_rao - cost_basis_unstaked
+
+        # Dust threshold - treat very small positions as fully closed
+        DUST_THRESHOLD_RAO = 1000
+        if new_alpha_rao <= DUST_THRESHOLD_RAO and new_alpha_rao > 0:
+            # Dust remains - write off the remaining cost basis as additional loss
+            # This ensures we start fresh on the next buy
+            remaining_cost_basis_rao = new_cost_basis_rao
+            profit_rao -= remaining_cost_basis_rao
+            bt.logging.debug(
+                f"Dust detected ({new_alpha_rao} rao alpha), writing off {remaining_cost_basis_rao} rao cost basis"
+            )
+            new_alpha_rao = 0
+            new_cost_basis_rao = 0
 
         # Insert transaction record with SELL type
         await self._connection.execute(
@@ -179,11 +198,12 @@ class PositionDatabase:
             ),
         )
 
-        # Update position - subtract alpha, add realized profit
+        # Update position with new values (not relative updates to avoid compounding errors)
         await self._connection.execute(
             """
             UPDATE positions SET
-                total_alpha_rao = total_alpha_rao - ?,
+                total_alpha_rao = ?,
+                total_tao_spent_rao = ?,
                 realized_profit_rao = realized_profit_rao + ?,
                 total_fee_paid_rao = total_fee_paid_rao + ?,
                 num_transactions = num_transactions + 1,
@@ -191,7 +211,8 @@ class PositionDatabase:
             WHERE netuid = ?
             """,
             (
-                event.alpha_unstaked_rao,
+                new_alpha_rao,
+                new_cost_basis_rao,
                 profit_rao,
                 event.paid_fee_rao,
                 now,
