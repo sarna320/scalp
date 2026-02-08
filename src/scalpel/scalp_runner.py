@@ -3,14 +3,14 @@ from bittensor.core.extrinsics.pallets.base import Call
 from async_substrate_interface.async_substrate import AsyncExtrinsicReceipt
 import bittensor as bt
 import asyncio
-import math
+from pathlib import Path
 
-from scalpel.database import PositionDatabase
 from scalpel.subnet_config import get_subnet_configs, SubnetConfig
-from scalpel.models import StakeAddedEvent, StakeRemovedEvent
+from scalpel.models import StakeAddedEvent, StakeRemovedEvent, Position
+from scalpel.positions_persistence import load_positions, save_positions
 
-EXTRINSIC_FEE_TAO_ADD_STAKE = 0.000136963
-EXTRINSIC_FEE_TAO_REMOVE_STAKE = 0.000135688
+EXTRINSIC_FEE_TAO_ADD_STAKE = bt.Balance.from_tao(0.000136963)
+EXTRINSIC_FEE_TAO_REMOVE_STAKE = bt.Balance.from_tao(0.000135688)
 ALPHA_FEE_PCT = 0.0005  # 0.05%
 
 
@@ -19,150 +19,52 @@ class ScalpRunner:
         self,
         subtensor: bt.AsyncSubtensor,
         wallet_name: str = "trader",
-        db_path: str = "./data/positions.db",
+        positions_path: str = "positions.json",
     ):
         self.subtensor = subtensor
         self.prices: dict[int, bt.Balance]
         self.subnets_config: list[SubnetConfig]
         self.current_block: int
         self.wallet = bt.Wallet(wallet_name)
-        self.db = PositionDatabase(db_path)
         bt.logging.info(
             f"Using wallet {self.wallet.coldkey.ss58_address}: {self.wallet}"
         )
+        self.positions: dict[int, Position] = {}
+        self._persist_lock = asyncio.Lock()
+        self.positions_path = Path(positions_path)
 
     async def run(self):
-        try:
-            await self.db.connect()
-            current_block = await self.subtensor.substrate.get_block()
-            current_block_hash = current_block.get("header", {}).get("hash")
-            self.subnets_config = get_subnet_configs()
-            await self.create_calls_buy()  # this calls will always remain the same
-            await self.subtensor.substrate.get_block_handler(
-                current_block_hash,
-                header_only=True,
-                subscription_handler=self.handler,
-            )
-        finally:
-            await self.db.close()
+        await load_positions(self)
+        current_block = await self.subtensor.substrate.get_block()
+        current_block_hash = current_block.get("header", {}).get("hash")
+        self.subnets_config = get_subnet_configs()
+        await self.create_calls_buy()  # this calls will always remain the same
+        await self.subtensor.substrate.get_block_handler(
+            current_block_hash,
+            header_only=True,
+            subscription_handler=self.handler,
+        )
 
     async def handler(self, block_data: dict):
         self.current_block = block_data["header"]["number"]
         bt.logging.info(f"Current block: [blue]{self.current_block}[/blue]")
         await self.refresh_prices()
-        subnets_to_stake = self.get_subnets_to_stake()
-        # subnets_to_unstake = await self.get_subnets_to_unstake()
-        # responses_for_stake, responses_for_unstake = await asyncio.gather(
-        #     *[
-        #         self.process_subnets(subnets_to_stake, call_is_buy=True),
-        #         self.process_subnets(subnets_to_unstake, call_is_buy=False),
-        #     ]
-        # )
-        # await asyncio.gather(
-        #     *[self.process_response_stake(response) for response in responses_for_stake]
-        #     + [
-        #         self.process_response_unstake(response)
-        #         for response in responses_for_unstake
-        #     ]
-        # )
-
+        subnets_to_stake = await self.get_subnets_to_stake()
         responses_for_stake = await self.process_subnets(
             subnets_to_stake, call_is_buy=True
         )
-
         await asyncio.gather(
             *[self.process_response_stake(response) for response in responses_for_stake]
         )
 
-        return None
-
-    def _safe_unstake_amount_rao(
-        sefl, stake_rao: int, fee_pct: float = ALPHA_FEE_PCT, buffer_rao: int = 0
-    ) -> int:
-        """
-        Returns an amount slightly below the current stake to avoid NotEnoughStakeToWithdraw caused by fees/rounding.
-        buffer_rao is in alpha-RAO.
-        """
-        # Conservative: assume fee is taken "on top" in stake-equivalent terms.
-        fee_rao = math.ceil(stake_rao * fee_pct)
-        return max(0, stake_rao - fee_rao - buffer_rao)
-
-    async def get_subnets_to_unstake(self) -> list[SubnetConfig]:
-        subnets_to_unstake = []
-        all_position = await self.db.get_all_positions()
-        if not all_position:
-            return subnets_to_unstake
-        for subnet_config in self.subnets_config:
-            current_price_on_subnet = self.prices.get(subnet_config.netuid)
-            current_postion = all_position.get(subnet_config.netuid)
-            if current_postion is None or current_postion.total_alpha == 0:
-                continue
-
-            base_required_price = (
-                current_postion.avg_entry_price * subnet_config.pct_profit
-            )
-
-            extrinsic_fee_per_alpha = (
-                EXTRINSIC_FEE_TAO_REMOVE_STAKE / current_postion.total_alpha_rao / 1e9
-            )
-
-            required_price_with_fees = (
-                base_required_price + extrinsic_fee_per_alpha
-            ) / (1 - ALPHA_FEE_PCT)
-
-            if current_price_on_subnet.tao >= required_price_with_fees:
-                bt.logging.debug(f"Current postion: {current_postion}")
-                limit_price = bt.Balance.from_tao(
-                    required_price_with_fees * (1 - subnet_config.slippage_sell_pct)
-                )
-                total_alpha_rao_to_unstake_from_position = bt.Balance.from_rao(
-                    current_postion.total_alpha_rao, subnet_config.netuid
-                )  # this for some reason gives error even if this exactly the same value from chain
-                total_alpha_rao_to_unstake_from_chain = await self.subtensor.get_stake(
-                    self.wallet.coldkey.ss58_address,
-                    subnet_config.validator_hotkey,
-                    subnet_config.netuid,
-                )
-                bt.logging.debug(
-                    f"Stake from chain: {total_alpha_rao_to_unstake_from_chain.rao} stake from postion {total_alpha_rao_to_unstake_from_position.rao}"
-                )
-
-                amount_unstaked_rao = self._safe_unstake_amount_rao(
-                    total_alpha_rao_to_unstake_from_chain.rao
-                )
-
-                subnet_config.call_sell = await SubtensorModule(
-                    self.subtensor
-                ).remove_stake_limit(
-                    netuid=subnet_config.netuid,
-                    hotkey=subnet_config.validator_hotkey,
-                    amount_unstaked=amount_unstaked_rao,
-                    limit_price=limit_price.rao,
-                    allow_partial=True,
-                )
-
-                subnets_to_unstake.append(subnet_config)
-                bt.logging.info(
-                    f"Unstake triggered for netuid {subnet_config.netuid}: "
-                    f"current_price={current_price_on_subnet.tao:.6f}, "
-                    f"base_required={base_required_price:.6f}, "
-                    f"required_with_fees={required_price_with_fees:.6f}"
-                )
-            else:
-                bt.logging.debug(
-                    f"Current price: {current_price_on_subnet.tao} < required price with fees: {required_price_with_fees} for current postion: {current_postion}"
-                )
-
-        if subnets_to_unstake:
-            bt.logging.debug(f"Subnets to unstake: [blue]{subnets_to_unstake}[/blue]")
-        return subnets_to_unstake
+        return True
 
     async def process_subnets(
         self, subnets: list[SubnetConfig], call_is_buy: bool
-    ) -> list[AsyncExtrinsicReceipt | None]:
+    ) -> list[tuple[int, AsyncExtrinsicReceipt] | tuple[None, None]]:
         if len(subnets) == 0:
-            return [None]
-        responses = await asyncio.gather(
+            return [(None, None)]
+        receipts = await asyncio.gather(
             *[
                 self.sign_and_send_extrinsic(
                     subnet.call_buy if call_is_buy else subnet.call_sell
@@ -170,13 +72,32 @@ class ScalpRunner:
                 for subnet in subnets
             ]
         )
-        return responses
+        return [(subnet.netuid, receipt) for subnet, receipt in zip(subnets, receipts)]
 
-    async def process_response_stake(self, response: None | AsyncExtrinsicReceipt):
-        if response is None:
+    async def process_response_stake(
+        self, response: tuple[int, AsyncExtrinsicReceipt] | tuple[None, None]
+    ):
+        response_netuid, receipt = response
+        if response_netuid is None or receipt is None:
             return
+
+        current_position = self.positions.get(response_netuid)
+        if current_position is None:
+            self.positions[response_netuid] = Position(response_netuid)
+            current_position = self.positions.get(response_netuid)
+
+        # Account for weight-based fee once per extrinsic receipt (whether ok or not)
+        current_position.total_tao_spent_rao += EXTRINSIC_FEE_TAO_ADD_STAKE.rao
+
+        ok = await receipt.is_success
+        if not ok:
+            bt.logging.warning(
+                f"Extrinsic failed, adding fee to position: {current_position}"
+            )
+            return
+
         bt.logging.debug(f"Processing response for stake: {response}")
-        events = await self.subtensor.substrate.get_events(response.block_hash)
+        events = await self.subtensor.substrate.get_events(receipt.block_hash)
         bt.logging.debug("EVENTS:")
         for event in events:
             # bt.logging.debug(event)
@@ -185,51 +106,14 @@ class ScalpRunner:
                 continue
             if stake_event.coldkey_ss58 != self.wallet.coldkey.ss58_address:
                 continue
+            if stake_event.netuid != response_netuid:
+                continue
             bt.logging.debug(stake_event)
-            position = await self.db.update_position(
-                event=stake_event,
-                extrinsic_hash=response.extrinsic_hash,
-                block_hash=response.block_hash,
-                block_number=response.block_number,
-            )
-            bt.logging.info(
-                f"Position STAKE for netuid {position.netuid}: "
-                f"alpha={position.total_alpha}, "
-                f"tao_spent={position.total_tao_spent}, "
-                f"avg_price={position.avg_entry_price:.6f}, "
-                f"realized_profit={position.realized_profit}, "
-                f"fee_paid={position.total_fee_paid}, "
-                f"txs={position.num_transactions}"
-            )
-
-    async def process_response_unstake(self, response: None | AsyncExtrinsicReceipt):
-        if response is None:
-            return
-        bt.logging.debug(f"Processing response unstake: {response}")
-        events = await self.subtensor.substrate.get_events(response.block_hash)
-        bt.logging.debug("EVENTS:")
-        for event in events:
-            # bt.logging.debug(event)
-            unstake_event = StakeRemovedEvent.from_substrate_event(event)
-            if unstake_event is None:
-                continue
-            if unstake_event.coldkey_ss58 != self.wallet.coldkey.ss58_address:
-                continue
-            bt.logging.debug(unstake_event)
-            position = await self.db.update_position_unstake(
-                event=unstake_event,
-                extrinsic_hash=response.extrinsic_hash,
-                block_hash=response.block_hash,
-                block_number=response.block_number,
-            )
-            bt.logging.info(
-                f"Position UNSTAKE for netuid {position.netuid}: "
-                f"alpha={position.total_alpha}, "
-                f"avg_price={position.avg_entry_price:.6f}, "
-                f"realized_profit={position.realized_profit}, "
-                f"fee_paid={position.total_fee_paid}, "
-                f"txs={position.num_transactions}"
-            )
+            bt.logging.debug(f"Positons before: {current_position}")
+            current_position.total_alpha_rao += stake_event.alpha_received_rao
+            current_position.total_tao_spent_rao += stake_event.staking_amount_rao
+            await save_positions(self)
+            bt.logging.debug(f"Positons after: {current_position}")
 
     async def sign_and_send_extrinsic(self, call: Call) -> AsyncExtrinsicReceipt | None:
         try:
@@ -267,12 +151,24 @@ class ScalpRunner:
             )
             bt.logging.info(f"Subnets config with calls: {subnet_config}")
 
-    def get_subnets_to_stake(self) -> list[SubnetConfig]:
+    async def get_subnets_to_stake(self) -> list[SubnetConfig]:
         subnets_to_stake = []
+        current_balance = await self.subtensor.get_balance(
+            self.wallet.coldkey.ss58_address
+        )
+        if current_balance.tao <= 0.01:
+            bt.logging.warning(f"Not eneough stake: {current_balance}")
+            return subnets_to_stake
         for subnet_config in self.subnets_config:
             current_price_on_subnet = self.prices.get(subnet_config.netuid)
+            if current_price_on_subnet is None:
+                continue
             if current_price_on_subnet.tao <= subnet_config.activation_price_buy.tao:
                 subnets_to_stake.append(subnet_config)
+            else:
+                bt.logging.debug(
+                    f"current_price_on_subnet: {current_price_on_subnet} > activation_price_buy: {subnet_config.activation_price_buy}"
+                )
         if subnets_to_stake:
             bt.logging.debug(
                 f"Achieved actiavation price for subnets to stake: [blue]{subnets_to_stake}[/blue]"

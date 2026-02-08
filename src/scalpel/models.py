@@ -55,7 +55,7 @@ class StakeAddedEvent:
     staking_amount_rao: int
     alpha_received_rao: int
     netuid: int
-    paid_fee_rao: int
+    paid_fee_rao: int # in alpha, this should be already paid in alpha, so we recive less alpha
 
     @classmethod
     def from_substrate_event(
@@ -95,12 +95,9 @@ class StakeAddedEvent:
 @dataclass
 class Position:
     netuid: int
-    total_alpha_rao: int
-    total_tao_spent_rao: int
-    total_fee_paid_rao: int
-    realized_profit_rao: int
-    num_transactions: int
-    last_updated: datetime
+    total_alpha_rao: int = 0
+    total_tao_spent_rao: int = 0
+    realized_profit_rao: int = 0
 
     @property
     def avg_entry_price(self) -> float:
@@ -118,19 +115,9 @@ class Position:
         return bt.Balance.from_rao(self.total_tao_spent_rao, netuid=0)
 
     @property
-    def total_fee_paid(self) -> bt.Balance:
-        return bt.Balance.from_rao(self.total_fee_paid_rao, netuid=0)
-
-    @property
     def realized_profit(self) -> bt.Balance:
         """Total realized profit from closed positions."""
         return bt.Balance.from_rao(self.realized_profit_rao, netuid=0)
-
-    @property
-    def unrealized_pnl_rao(self) -> int | None:
-        """Unrealized P&L in rao (requires current price to calculate)."""
-        # This would need current price to calculate: (current_price - avg_entry_price) * total_alpha_rao
-        return None
 
 
 @dataclass
