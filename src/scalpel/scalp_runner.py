@@ -272,6 +272,7 @@ class ScalpRunner:
             bt.logging.warning(
                 f"Extrinsic failed, adding fee to position: {current_position}"
             )
+            await save_positions(self)
             return
 
         bt.logging.debug(f"Processing response for stake: {response}")
@@ -335,7 +336,7 @@ class ScalpRunner:
             self.wallet.coldkey.ss58_address
         )
         if current_balance.tao <= 0.01:
-            bt.logging.warning(f"Not eneough stake: {current_balance}")
+            bt.logging.warning(f"Not eneough balance: {current_balance}")
             return subnets_to_stake
         for subnet_config in self.subnets_config:
             current_price_on_subnet = self.prices.get(subnet_config.netuid)
