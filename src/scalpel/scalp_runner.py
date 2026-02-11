@@ -143,7 +143,7 @@ class ScalpRunner:
             pos.total_tao_spent_rao -= cost_basis_sold_rao
 
             # Clean up rounding leftovers when fully closed
-            if pos.total_alpha_rao == 0:
+            if pos.total_alpha_rao <= 1:
                 pos.total_tao_spent_rao = 0
 
             bt.logging.debug(f"Applied StakeRemoved: {removed}")
@@ -211,7 +211,7 @@ class ScalpRunner:
                 ).remove_stake_limit(
                     hotkey=cfg.validator_hotkey,
                     netuid=cfg.netuid,
-                    amount_unstaked=plan.amount_alpha_to_sell_rao,
+                    amount_unstaked=plan.amount_alpha_to_sell_rao - 1, # Substract 1 to avoid error with NotEnoughStakeToWithdraw, even if you getting data fresh from chain
                     limit_price=plan.limit_price.rao,
                     allow_partial=True,
                 )

@@ -4,13 +4,25 @@
       "netuid": 99,
       "total_alpha_rao": 0,
       "total_tao_spent_rao": 0,
-      "realized_profit_rao": 26876626
+      "realized_profit_rao": 72065131
     },
     "47": {
       "netuid": 47,
       "total_alpha_rao": 0,
       "total_tao_spent_rao": 0,
       "realized_profit_rao": 37870323
+    },
+    "107": {
+      "netuid": 107,
+      "total_alpha_rao": 0,
+      "total_tao_spent_rao": 1232667,
+      "realized_profit_rao": 0
+    },
+    "15": {
+      "netuid": 15,
+      "total_alpha_rao": 0,
+      "total_tao_spent_rao": 1,
+      "realized_profit_rao": 12199140
     }
   }
 }
