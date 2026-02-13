@@ -143,6 +143,7 @@ class ScalpRunner:
             pos.total_tao_spent_rao -= cost_basis_sold_rao
 
             # Clean up rounding leftovers when fully closed
+            # This is also needed since when we sell we substract 1 from postions
             if pos.total_alpha_rao <= 1:
                 pos.total_tao_spent_rao = 0
 
@@ -163,7 +164,7 @@ class ScalpRunner:
         for cfg in self.subnets_config:
             pos = self.positions.get(cfg.netuid)
             if pos is None or pos.total_alpha_rao <= 0:
-                bt.logging.debug(f"Positions netuid: {cfg.netuid} is None or 0")
+                # bt.logging.debug(f"Positions netuid: {cfg.netuid} is None or 0")
                 continue
 
             stake_from_chain: bt.Balance = await self.subtensor.get_stake(
@@ -218,7 +219,8 @@ class ScalpRunner:
                 ).remove_stake_limit(
                     hotkey=cfg.validator_hotkey,
                     netuid=cfg.netuid,
-                    amount_unstaked=plan.amount_alpha_to_sell_rao - 1, # Substract 1 to avoid error with NotEnoughStakeToWithdraw, even if you getting data fresh from chain
+                    amount_unstaked=plan.amount_alpha_to_sell_rao
+                    - 1,  # Substract 1 to avoid error with NotEnoughStakeToWithdraw, even if you getting data fresh from chain
                     limit_price=plan.limit_price.rao,
                     allow_partial=True,
                 )
