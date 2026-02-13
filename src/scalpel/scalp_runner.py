@@ -186,6 +186,12 @@ class ScalpRunner:
             if dyn is None:
                 bt.logging.debug(f"Dynamic netuid: {cfg.netuid} is None")
                 continue
+
+            # Compute desired sell amount based on sell_pct and min_sell_alpha
+            desired_sell_rao = int(pos.total_alpha_rao * cfg.sell_pct)
+            if desired_sell_rao < cfg.min_sell_alpha_rao:
+                desired_sell_rao = min(cfg.min_sell_alpha_rao, pos.total_alpha_rao)
+
             plan = build_sell_plan(
                 netuid=cfg.netuid,
                 dynamic=dyn,
@@ -194,7 +200,8 @@ class ScalpRunner:
                 pct_profit=cfg.pct_profit,
                 slippage_sell_pct=cfg.slippage_sell_pct,
                 flat_fee_sell_rao=EXTRINSIC_FEE_TAO_REMOVE_STAKE.rao,
-                min_gross_fill_rao=0,  # optionally set e.g. pos.total_alpha_rao // 10 to avoid tiny sells
+                min_gross_fill_rao=0,
+                max_sell_alpha_rao=desired_sell_rao,
             )
             if plan is None:
                 bt.logging.debug(f"Plan netuid: {cfg.netuid} is None")

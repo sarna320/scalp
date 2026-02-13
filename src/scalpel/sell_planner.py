@@ -162,7 +162,7 @@ def estimate_max_fill_under_limit(
     *,
     dynamic: DynamicInfo,
     limit_price_rao: int,
-    position_total_alpha_rao: int,
+    max_gross_sell_rao: int,
 ) -> tuple[int, int, int]:
     """
     Estimate max gross alpha fill such that final spot price stays >= limit_price.
@@ -192,7 +192,7 @@ def estimate_max_fill_under_limit(
         return 0, 0, 0
 
     gross_fill_cap = max_gross_alpha_for_net_limit(net_alpha_limit)
-    gross_fill = min(position_total_alpha_rao, gross_fill_cap)
+    gross_fill = min(max_gross_sell_rao, gross_fill_cap)
     net_alpha = net_alpha_into_pool_rao(gross_fill)
     if net_alpha <= 0:
         return 0, 0, 0
@@ -214,6 +214,7 @@ def build_sell_plan(
     slippage_sell_pct: float,
     flat_fee_sell_rao: int,
     min_gross_fill_rao: int = 0,
+    max_sell_alpha_rao: int | None = None,
     max_iters: int = 20,
 ) -> Optional[SellPlan]:
     """
@@ -227,8 +228,13 @@ def build_sell_plan(
     if position_total_alpha_rao <= 0:
         return None
 
-    # Start from "try to sell everything"
-    assumed_gross_fill = position_total_alpha_rao
+    # Cap sell amount if max_sell_alpha_rao is set
+    sell_cap = position_total_alpha_rao
+    if max_sell_alpha_rao is not None:
+        sell_cap = min(max_sell_alpha_rao, position_total_alpha_rao)
+
+    # Start from sell cap (full position or partial)
+    assumed_gross_fill = sell_cap
 
     for _ in range(max_iters):
         activation_rao, limit_rao, cost_basis_rao, required_proceeds_rao = (
@@ -245,7 +251,7 @@ def build_sell_plan(
         est_gross_fill, est_net_alpha, est_tao_out = estimate_max_fill_under_limit(
             dynamic=dynamic,
             limit_price_rao=limit_rao,
-            position_total_alpha_rao=position_total_alpha_rao,
+            max_gross_sell_rao=sell_cap,
         )
 
         if est_gross_fill <= 0:
@@ -295,7 +301,7 @@ def build_sell_plan(
     est_gross_fill, est_net_alpha, est_tao_out = estimate_max_fill_under_limit(
         dynamic=dynamic,
         limit_price_rao=limit_rao,
-        position_total_alpha_rao=position_total_alpha_rao,
+        max_gross_sell_rao=sell_cap,
     )
     if est_gross_fill <= 0:
         return None

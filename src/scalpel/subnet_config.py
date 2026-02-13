@@ -25,6 +25,15 @@ class SubnetConfig:
     # Example BAD:  pct_profit=1.05, slippage=0.05 → net=0.9975 (-0.25% LOSS!)
     slippage_sell_pct: float
 
+    # Fraction of position to sell per block (e.g., 0.25 = 25%)
+    # Default 1.0 = sell entire position at once
+    sell_pct: float = 1.0
+
+    # Minimum alpha to sell (in alpha token units, e.g., 30.0)
+    # If position * sell_pct < min_sell_alpha, sell min(min_sell_alpha, position) instead
+    # Default 0 = no minimum
+    min_sell_alpha: float = 0.0
+
     # Optional fields (with defaults)
     validator_hotkey: str | None = None
     amount_tao_to_stake_buy: bt.Balance | None = None
@@ -61,6 +70,8 @@ class SubnetConfig:
         )
         self.pct_profit = float(self.pct_profit)
         self.slippage_sell_pct = float(self.slippage_sell_pct)
+        self.sell_pct = float(self.sell_pct)
+        self.min_sell_alpha_rao = int(float(self.min_sell_alpha) * 1_000_000_000)
 
         # Validate configuration to prevent losses
         # self._validate_config()
