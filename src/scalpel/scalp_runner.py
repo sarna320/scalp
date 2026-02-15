@@ -73,6 +73,7 @@ class ScalpRunner:
                 for response in responses_for_unstake
             ],
         )
+        self.log_unrealized_pnl()
         return None
 
     async def process_response_unstake(
@@ -362,6 +363,39 @@ class ScalpRunner:
                 f"Achieved actiavation price for subnets to stake: [blue]{subnets_to_stake}[/blue]"
             )
         return subnets_to_stake
+
+    def log_unrealized_pnl(self):
+        total_unrealized_rao = 0
+        total_realized_rao = 0
+        for netuid, pos in self.positions.items():
+            total_realized_rao += pos.realized_profit_rao
+            if pos.total_alpha_rao <= 0:
+                continue
+            price = self.prices.get(netuid)
+            if price is None:
+                continue
+            current_value_rao = int(pos.total_alpha_rao * price.tao)
+            unrealized_rao = current_value_rao - pos.total_tao_spent_rao
+            total_unrealized_rao += unrealized_rao
+            unrealized_tao = bt.Balance.from_rao(unrealized_rao, netuid=0)
+            cost_tao = pos.total_tao_spent
+            value_tao = bt.Balance.from_rao(current_value_rao, netuid=0)
+            pnl_pct = (unrealized_rao / pos.total_tao_spent_rao * 100) if pos.total_tao_spent_rao > 0 else 0
+            color = "green" if unrealized_rao >= 0 else "red"
+            bt.logging.info(
+                f"SN{netuid}: cost={cost_tao} value={value_tao} "
+                f"unrealized=[{color}]{unrealized_tao} ({pnl_pct:+.1f}%)[/{color}] "
+                f"realized={pos.realized_profit}"
+            )
+        total_unrealized = bt.Balance.from_rao(total_unrealized_rao, netuid=0)
+        total_realized = bt.Balance.from_rao(total_realized_rao, netuid=0)
+        total = bt.Balance.from_rao(total_unrealized_rao + total_realized_rao, netuid=0)
+        color = "green" if total_unrealized_rao >= 0 else "red"
+        bt.logging.info(
+            f"TOTAL: unrealized=[{color}]{total_unrealized}[/{color}] "
+            f"realized=[green]{total_realized}[/green] "
+            f"combined=[green]{total}[/green]"
+        )
 
     async def refresh_prices(self):
         try:

@@ -2,9 +2,9 @@
   "positions": {
     "99": {
       "netuid": 99,
-      "total_alpha_rao": 0,
-      "total_tao_spent_rao": 0,
-      "realized_profit_rao": 83340151
+      "total_alpha_rao": 351821779313,
+      "total_tao_spent_rao": 1404583616,
+      "realized_profit_rao": 97637033
     },
     "47": {
       "netuid": 47,
@@ -14,15 +14,15 @@
     },
     "107": {
       "netuid": 107,
-      "total_alpha_rao": 9795643724,
-      "total_tao_spent_rao": 40673284,
-      "realized_profit_rao": 8815791
+      "total_alpha_rao": 0,
+      "total_tao_spent_rao": 0,
+      "realized_profit_rao": 184444859
     },
     "15": {
       "netuid": 15,
-      "total_alpha_rao": 235440737510,
-      "total_tao_spent_rao": 885264917,
-      "realized_profit_rao": 22386775
+      "total_alpha_rao": 0,
+      "total_tao_spent_rao": 0,
+      "realized_profit_rao": 364425833
     }
   }
 }
