@@ -2,9 +2,9 @@
   "positions": {
     "99": {
       "netuid": 99,
-      "total_alpha_rao": 351821779313,
-      "total_tao_spent_rao": 1404583616,
-      "realized_profit_rao": 97637033
+      "total_alpha_rao": 0,
+      "total_tao_spent_rao": 0,
+      "realized_profit_rao": 141011393
     },
     "47": {
       "netuid": 47,
@@ -15,7 +15,7 @@
     "107": {
       "netuid": 107,
       "total_alpha_rao": 0,
-      "total_tao_spent_rao": 0,
+      "total_tao_spent_rao": 273926,
       "realized_profit_rao": 184444859
     },
     "15": {

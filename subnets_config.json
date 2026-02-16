@@ -4,7 +4,7 @@
         "limit_price_buy": 0.003794,
         "activation_price_buy": 0.003636,
         "amount_tao_to_stake_buy": 0.2,
-        "pct_profit": 1.05,
+        "pct_profit": 1.1,
         "slippage_sell_pct": 0.015,
         "sell_pct": 0.1,
         "min_sell_alpha": 5.0
@@ -21,10 +21,10 @@
     },
     {
         "netuid": 15,
-        "limit_price_buy": 0.003204,
-        "activation_price_buy": 0.003165,
+        "limit_price_buy": 0.003614,
+        "activation_price_buy": 0.003572,
         "amount_tao_to_stake_buy": 0.1,
-        "pct_profit": 1.01,
+        "pct_profit": 1.02,
         "slippage_sell_pct": 0.015,
         "sell_pct": 0.01,
         "min_sell_alpha": 5.0
