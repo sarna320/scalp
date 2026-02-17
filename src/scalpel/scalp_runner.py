@@ -349,6 +349,16 @@ class ScalpRunner:
             bt.logging.warning(f"Not eneough balance: {current_balance}")
             return subnets_to_stake
         for subnet_config in self.subnets_config:
+            if (
+                subnet_config.max_alpha_position is not None
+                and subnet_config.max_alpha_position.tao
+                <= self.positions.get(subnet_config.netuid).total_alpha.tao
+            ):
+                bt.logging.debug(
+                    f"Current postion achived max allowed alpha on subnet {subnet_config.netuid}: {subnet_config.max_alpha_position}"
+                )
+                continue
+
             current_price_on_subnet = self.prices.get(subnet_config.netuid)
             if current_price_on_subnet is None:
                 continue
@@ -380,7 +390,11 @@ class ScalpRunner:
             unrealized_tao = bt.Balance.from_rao(unrealized_rao, netuid=0)
             cost_tao = pos.total_tao_spent
             value_tao = bt.Balance.from_rao(current_value_rao, netuid=0)
-            pnl_pct = (unrealized_rao / pos.total_tao_spent_rao * 100) if pos.total_tao_spent_rao > 0 else 0
+            pnl_pct = (
+                (unrealized_rao / pos.total_tao_spent_rao * 100)
+                if pos.total_tao_spent_rao > 0
+                else 0
+            )
             color = "green" if unrealized_rao >= 0 else "red"
             bt.logging.info(
                 f"SN{netuid}: cost={cost_tao} value={value_tao} "

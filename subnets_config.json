@@ -1,32 +1,34 @@
 [
     {
         "netuid": 107,
-        "limit_price_buy": 0.003794,
-        "activation_price_buy": 0.003636,
+        "limit_price_buy": 0.003823,
+        "activation_price_buy": 0.003748,
         "amount_tao_to_stake_buy": 0.2,
         "pct_profit": 1.1,
         "slippage_sell_pct": 0.015,
-        "sell_pct": 0.1,
-        "min_sell_alpha": 5.0
+        "sell_pct": 0.25,
+        "min_sell_alpha": 10.0
     },
     {
         "netuid": 99,
-        "limit_price_buy": 0.003595,
-        "activation_price_buy": 0.003571,
+        "limit_price_buy": 0.003877,
+        "activation_price_buy": 0.003760,
         "amount_tao_to_stake_buy": 0.2,
-        "pct_profit": 1.01,
+        "pct_profit": 1.02,
         "slippage_sell_pct": 0.015,
         "sell_pct": 0.05,
-        "min_sell_alpha": 5.0
+        "min_sell_alpha": 10.0,
+        "max_alpha_position": 100
     },
     {
         "netuid": 15,
-        "limit_price_buy": 0.003614,
-        "activation_price_buy": 0.003572,
-        "amount_tao_to_stake_buy": 0.1,
+        "limit_price_buy": 0.003703,
+        "activation_price_buy": 0.003655,
+        "amount_tao_to_stake_buy": 0.2,
         "pct_profit": 1.02,
         "slippage_sell_pct": 0.015,
-        "sell_pct": 0.01,
-        "min_sell_alpha": 5.0
+        "sell_pct": 0.25,
+        "min_sell_alpha": 10.0,
+        "max_alpha_position": 100
     }
 ]

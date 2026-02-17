@@ -40,6 +40,8 @@ class SubnetConfig:
     call_buy: Call | None = None
     call_sell: Call | None = None
 
+    max_alpha_position: bt.Balance | None = None
+
     # Future sell functionality (currently unused)
     # activation_price_sell: bt.Balance | None = None
     # limit_price_sell: bt.Balance | None = None
@@ -73,8 +75,13 @@ class SubnetConfig:
         self.sell_pct = float(self.sell_pct)
         self.min_sell_alpha_rao = int(float(self.min_sell_alpha) * 1_000_000_000)
 
+        if self.max_alpha_position is not None:
+            self.max_alpha_position = bt.Balance.from_float(
+                float(self.max_alpha_position), netuid=self.netuid
+            )
+
         # Validate configuration to prevent losses
-        # self._validate_config()
+        self._validate_config()
 
     def _validate_config(self) -> None:
         """
