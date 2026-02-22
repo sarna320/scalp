@@ -3,26 +3,50 @@
     "99": {
       "netuid": 99,
       "total_alpha_rao": 0,
-      "total_tao_spent_rao": 0,
-      "realized_profit_rao": 141011393
+      "total_tao_spent_rao": 640551907,
+      "realized_profit_rao": 157780765
     },
     "47": {
       "netuid": 47,
       "total_alpha_rao": 0,
       "total_tao_spent_rao": 0,
-      "realized_profit_rao": 37870323
+      "realized_profit_rao": 56910196
     },
     "107": {
       "netuid": 107,
       "total_alpha_rao": 0,
-      "total_tao_spent_rao": 273926,
-      "realized_profit_rao": 210653680
+      "total_tao_spent_rao": 0,
+      "realized_profit_rao": 709706916
     },
     "15": {
       "netuid": 15,
       "total_alpha_rao": 0,
       "total_tao_spent_rao": 0,
       "realized_profit_rao": 364425833
+    },
+    "70": {
+      "netuid": 70,
+      "total_alpha_rao": 0,
+      "total_tao_spent_rao": 0,
+      "realized_profit_rao": 3565847039
+    },
+    "114": {
+      "netuid": 114,
+      "total_alpha_rao": 0,
+      "total_tao_spent_rao": 0,
+      "realized_profit_rao": 143387525
+    },
+    "126": {
+      "netuid": 126,
+      "total_alpha_rao": 0,
+      "total_tao_spent_rao": 0,
+      "realized_profit_rao": 291372653
+    },
+    "76": {
+      "netuid": 76,
+      "total_alpha_rao": 0,
+      "total_tao_spent_rao": 410889,
+      "realized_profit_rao": 217900687
     }
   }
 }

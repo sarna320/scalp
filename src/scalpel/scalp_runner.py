@@ -349,10 +349,14 @@ class ScalpRunner:
             bt.logging.warning(f"Not eneough balance: {current_balance}")
             return subnets_to_stake
         for subnet_config in self.subnets_config:
+            position = self.positions.get(subnet_config.netuid)
+            if position is not None:
+                total_alpha = position.total_alpha.tao
+            else:
+                total_alpha = 0.0
             if (
                 subnet_config.max_alpha_position is not None
-                and subnet_config.max_alpha_position.tao
-                <= self.positions.get(subnet_config.netuid).total_alpha.tao
+                and subnet_config.max_alpha_position.tao <= total_alpha
             ):
                 bt.logging.debug(
                     f"Current postion achived max allowed alpha on subnet {subnet_config.netuid}: {subnet_config.max_alpha_position}"
